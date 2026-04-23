@@ -12,4 +12,5 @@ dependencies = [
     "langchain-tavily>=0.2.13",
     "python-dotenv>=1.2.1",
     "tavily-python>=0.7.12",
+    "langchain-google-genai>=1.0.0",
 ]

@@ -1,0 +1,43 @@
+from dotenv import load_dotenv
+
+load_dotenv()
+from langchain.agents import create_agent
+from langchain.tools import tool
+from langchain_core.messages import HumanMessage
+# from langchain_openai import ChatOpenAI
+from langchain_google_genai import ChatGoogleGenerativeAI
+from tavily import TavilyClient
+
+tavily = TavilyClient()
+
+@tool
+def search(query : str) -> str :
+    """
+    Tool that uses to search over internet 
+    Args :
+        query : The query to search for 
+    Returns :
+        The search result 
+    """
+    print(f"Using tool and searching for {query}")
+    # return "Tokyo weather is sunny"
+    return tavily.search(query=query)
+
+
+# llm = ChatOpenAI()
+llm = ChatGoogleGenerativeAI(model="gemini-2.5-flash", temperature=0)
+tools = [search]
+agent = create_agent(model=llm,tools=tools)
+
+
+def main():
+    print("Hello from lang-chain course")
+    result = agent.invoke({
+        # "messages" : HumanMessage(content="What is the current weather in Tokyo?")
+        "messages" : HumanMessage(content="search for 3 job postings for an ai engineer using langchain in Hyderabad on linkedin and list their details?")
+    })
+    print(result)
+
+
+if __name__ == "__main__":
+    main()
