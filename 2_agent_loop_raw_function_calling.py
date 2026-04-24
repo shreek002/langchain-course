@@ -1,3 +1,5 @@
+#This raw implementation is only related to Ollama for Anthropic we again need to change 
+
 from dotenv import load_dotenv
 
 load_dotenv()
@@ -100,6 +102,7 @@ def ollama_chat_traced(messages):
 
 @traceable(name="Ollama Agent Loop")
 def run_agent(question: str):
+    #imp
     tools_dict = {
         "get_product_price": get_product_price,
         "apply_discount": apply_discount,

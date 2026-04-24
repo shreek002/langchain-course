@@ -4,11 +4,13 @@ from langchain.chat_models import init_chat_model
 from langchain.tools import tool
 from langchain_core.messages import HumanMessage, SystemMessage, ToolMessage
 from langsmith import traceable
+# from groq import Groq
 
 load_dotenv()
 
 MAX_ITERATIONS = 10
 MODEL = "qwen3:1.7b"
+# MODEL = "llama-3.1-8b-instant"
 
 @tool
 def get_product_price(product: str) -> float:
@@ -39,6 +41,7 @@ def run_agent(question: str):
     tools_by_name = {tool_def.name: tool_def for tool_def in tools}
 
     llm = init_chat_model(f"ollama:{MODEL}", temperature=0)
+    # llm = init_chat_model(f"{MODEL}", temperature=0)
     llm_with_tools = llm.bind_tools(tools)
 
     print(f"Question: {question}")
@@ -57,6 +60,7 @@ def run_agent(question: str):
                 "6. If discount tier is missing, ask the user to choose from: bronze, silver, gold.\n"
                 "7. If user gives any discount tier text (even invalid), pass it to apply_discount as-is."
                 "8. If you need to ask the user for missing info (product or tier), you MUST start your message with [NEED_INFO]."
+                "9. If multiple dimensions are missing then ask the user one dimension at a time"
             )),
         HumanMessage(content=question),
     ]
@@ -86,14 +90,14 @@ def run_agent(question: str):
             continue
 
         # 3. Process ALL tool calls in the current turn
-        print(f"  [Action] Processing {len(tool_calls)} tool call(s)...")
+        print(f"[Action] Processing {len(tool_calls)} tool call(s)...")
         
         for tool_call in tool_calls:
             tool_name = tool_call.get("name")
             tool_args = tool_call.get("args", {})
             tool_call_id = tool_call.get("id")
 
-            print(f"    >> Executing {tool_name} with {tool_args}")
+            print(f">> Executing {tool_name} with {tool_args}")
             
             tool_to_use = tools_by_name.get(tool_name)
             if tool_to_use:
@@ -114,4 +118,5 @@ def run_agent(question: str):
 if __name__ == "__main__":
     print("Hello Simple LangChain Agent")
     print()
-    run_agent("What are the prices of products laptop and headphones after applying gold tier discount?")
+    run_agent("What are the prices of products?")
+

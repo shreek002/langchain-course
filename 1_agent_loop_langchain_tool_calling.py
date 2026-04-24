@@ -6,6 +6,7 @@ from langchain.chat_models import init_chat_model
 from langchain.tools import tool
 from langchain_core.messages import HumanMessage, SystemMessage, ToolMessage
 from langsmith import traceable
+from groq import Groq
 
 MAX_ITERATIONS = 10
 MODEL = "qwen3:1.7b"
