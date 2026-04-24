@@ -10,38 +10,33 @@ load_dotenv()
 MAX_ITERATIONS = 10
 MODEL = "qwen3:1.7b"
 
-
-# --- Tools (LangChain @tool decorator) ---
-
-
 @tool
 def get_product_price(product: str) -> float:
     """Look up the price of a product in the catalog.
-    Available products: laptop, headphones, keyboard"""
-    print(f"    >> Executing get_product_price(product='{product}')")
+    Available products: laptop, headphones, keyboard."""
+    normalized_product = product.strip().lower()
+    print(f"    >> get_product_price(product='{normalized_product}')")
     prices = {"laptop": 1299.99, "headphones": 149.95, "keyboard": 89.50}
-    return prices.get(product.lower(), 0)
+    return prices.get(normalized_product, 0)
 
 
 @tool
 def apply_discount(price: float, discount_tier: str) -> float:
     """Apply a discount tier to a price and return the final price.
     Available tiers: bronze, silver, gold."""
-    print(f"    >> Executing apply_discount(price={price}, discount_tier='{discount_tier}')")
-    discount_tier_lower = discount_tier.lower()
+    normalized_tier = discount_tier.strip().lower()
+    print(f"    >> apply_discount(price={price}, discount_tier='{normalized_tier}')")
     discount_percentages = {"bronze": 5, "silver": 12, "gold": 23}
-    discount = discount_percentages.get(discount_tier_lower, 0)
+    discount = discount_percentages.get(normalized_tier, 0)
     return round(price * (1 - discount / 100), 2)
 
+def is_final_answer(content: str) -> bool:
+    return "[NEED_INFO]" not in content
 
-# --- Agent Loop ---
-
-
-@traceable(name="LangChain Agent Loop")
+@traceable(name="LangChain Agent Loop Parallel")
 def run_agent(question: str):
     tools = [get_product_price, apply_discount]
-    tools_dict = {t.name: t for t in tools}
-    discount_applied = False
+    tools_by_name = {tool_def.name: tool_def for tool_def in tools}
 
     llm = init_chat_model(f"ollama:{MODEL}", temperature=0)
     llm_with_tools = llm.bind_tools(tools)
@@ -50,105 +45,73 @@ def run_agent(question: str):
     print("=" * 60)
 
     messages = [
-        SystemMessage(
-            content=(
-                "You are a helpful shopping assistant. "
-                "You have access to a product catalog tool "
-                "and a discount tool.\n\n"
-                "STRICT RULES — you must follow these exactly:\n"
-                "1. NEVER guess or assume any product price. "
-                "You MUST call get_product_price first to get the real price.\n"
-                "2. Only call get_product_price AFTER you have received "
-                "the product from user. Pass the exact product "
-                "3. Only call apply_discount AFTER you have received "
-                "a price from get_product_price. Pass the exact price "
-                "returned by get_product_price — do NOT pass a made-up number.\n"
-                "4. NEVER calculate discounts yourself using math. "
-                "Always use the apply_discount tool.\n"
-                "5. If the user does not specify the product, "
-                "ask them which product to use (show all products available) — do NOT assume one."
-                "6. If the user does not specify a discount tier, "
-                "ask them which tier to use — do NOT assume one."
-            )
-        ),
+        SystemMessage(content=(
+                "You are a helpful shopping assistant with two tools: "
+                "get_product_price and apply_discount.\n\n"
+                "Rules:\n"
+                "1. Never guess price. Always call get_product_price.\n"
+                "2. Call get_product_price only after you know the product. Never assume missing product.\n"
+                "3. Call apply_discount only after get_product_price returns a price.\n"
+                "4. Never calculate discount yourself; always use apply_discount.\n"
+                "5. If product is missing, ask the user to choose from: laptop, headphones, keyboard.\n"
+                "6. If discount tier is missing, ask the user to choose from: bronze, silver, gold.\n"
+                "7. If user gives any discount tier text (even invalid), pass it to apply_discount as-is."
+                "8. If you need to ask the user for missing info (product or tier), you MUST start your message with [NEED_INFO]."
+            )),
         HumanMessage(content=question),
     ]
 
     for iteration in range(1, MAX_ITERATIONS + 1):
         print(f"\n--- Iteration {iteration} ---")
-
         ai_message = llm_with_tools.invoke(messages)
+        
+        # 1. Add the assistant's message (which contains the tool_calls) to history
+        messages.append(ai_message)
 
         tool_calls = ai_message.tool_calls
 
-        # If no tool calls, either ask user for follow-up input or return final answer
+        # 2. If no tools are called, handle as final answer or clarification
         if not tool_calls:
             content = (ai_message.content or "").strip()
-            content_lower = content.lower()
-
-            if "final answer:" in content_lower:
-                final_answer = content.split(":", 1)[-1].strip()
-                print(f"\nFinal Answer: {final_answer}")
-                return final_answer
-
-            if discount_applied:
+            if is_final_answer(content):
                 print(f"\nFinal Answer: {content}")
                 return content
-
-            follow_up_markers = [
-                "?",
-                "please let me know",
-                "which discount tier",
-                "which tier",
-                "please specify",
-                "please provide",
-                "could you provide",
-                "can you provide",
-            ]
-            should_ask_follow_up = any(marker in content_lower for marker in follow_up_markers)
-            if not should_ask_follow_up:
-                print(f"\nFinal Answer: {content}")
-                return content
-
-            print(f"\nAssistant: {content}")
-            try:
-                user_follow_up = input("You: ").strip()
-            except EOFError:
-                print("\nNo follow-up input received (EOF). Stopping agent loop.")
-                return content
-
-            if not user_follow_up:
-                print("ERROR: Empty input received. Stopping agent loop.")
-                return None
-
-            messages.append(ai_message)
+            
+            display_text = content.replace("[NEED_INFO]", "").strip()
+            print(f"\nAssistant: {display_text}")
+            user_follow_up = input("You: ").strip()
+            if not user_follow_up: break
+            
             messages.append(HumanMessage(content=user_follow_up))
             continue
 
-        # Process only the FIRST tool call — force one tool per iteration
-        tool_call = tool_calls[0]
-        tool_name = tool_call.get("name")
-        tool_args = tool_call.get("args", {})
-        tool_call_id = tool_call.get("id")
+        # 3. Process ALL tool calls in the current turn
+        print(f"  [Action] Processing {len(tool_calls)} tool call(s)...")
+        
+        for tool_call in tool_calls:
+            tool_name = tool_call.get("name")
+            tool_args = tool_call.get("args", {})
+            tool_call_id = tool_call.get("id")
 
-        print(f"  [Tool Selected] {tool_name} with args: {tool_args}")
+            print(f"    >> Executing {tool_name} with {tool_args}")
+            
+            tool_to_use = tools_by_name.get(tool_name)
+            if tool_to_use:
+                observation = tool_to_use.invoke(tool_args)
+                messages.append(ToolMessage(
+                    content=str(observation), 
+                    tool_call_id=tool_call_id
+                ))
+            else:
+                messages.append(ToolMessage(
+                    content=f"Error: Tool {tool_name} not found.", 
+                    tool_call_id=tool_call_id
+                ))
 
-        tool_to_use = tools_dict.get(tool_name)
-        if tool_to_use is None:
-            raise ValueError(f"Tool '{tool_name}' not found")
-
-        observation = tool_to_use.invoke(tool_args)
-        print(f"  [Tool Result] {observation}")
-
-        messages.append(ai_message)
-        messages.append(
-            ToolMessage(content=str(observation), tool_call_id=tool_call_id)
-        )
-
-    print("ERROR: Max iterations reached without a final answer")
+    print("ERROR: Max iterations reached.")
     return None
 
 if __name__ == "__main__":
-    print("Hello LangChain Agent (.bind_tools)!")
+    print("Hello Simple LangChain Agent")
     print()
-    result = run_agent("What is the price?")
+    run_agent("What are the prices of products laptop and headphones after applying gold tier discount?")
